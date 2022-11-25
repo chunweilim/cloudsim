@@ -25,6 +25,9 @@ import org.cloudbus.cloudsim.core.CloudSim;
  */
 public class Cloudlet {
 
+    private double delay;
+
+    private double deadline;
     /**
      * The cloudlet ID.
      */
@@ -200,6 +203,8 @@ public class Cloudlet {
      * The cloudlet has failed due to a resource failure.
      */
     public static final int FAILED_RESOURCE_UNAVAILABLE = 9;
+
+    public static final int SUCCESS_BUT_PASSED_DEADLINE = 10;
 
     /**
      * The id of the vm that is planned to execute the cloudlet.
@@ -460,7 +465,23 @@ public class Cloudlet {
         setUtilizationModelBw(utilizationModelBw);
     }
 
-	// ////////////////////// INTERNAL CLASS ///////////////////////////////////
+    public void setDelay(double delay) {
+        this.delay = delay;
+    }
+
+    public double getDelay() {
+        return delay;
+    }
+
+    public void setDeadline(double deadline) {
+        this.deadline = deadline;
+    }
+
+    public double getDeadline() {
+        return deadline;
+    }
+
+    // ////////////////////// INTERNAL CLASS ///////////////////////////////////
     /**
      * Internal class that keeps track of Cloudlet's movement in different
      * CloudResources. Each time a cloudlet is run on a given VM, the cloudlet's
@@ -762,8 +783,6 @@ public class Cloudlet {
      * cancel or to move this Cloudlet into different CloudResources.
      *
      * @param length length of this Cloudlet
-     * @see gridsim.AllocPolicy
-     * @see gridsim.ResCloudlet
      * @pre length >= 0.0
      * @post $none
      */
@@ -1010,7 +1029,10 @@ public class Cloudlet {
             write("Sets Cloudlet status from " + getCloudletStatusString() + " to "
                     + Cloudlet.getStatusString(newStatus));
         }
-
+        if (newStatus == Cloudlet.SUCCESS && isDue()) {
+            status = Cloudlet.SUCCESS_BUT_PASSED_DEADLINE;
+            return;
+        }
         status = newStatus;
     }
 
@@ -1090,7 +1112,9 @@ public class Cloudlet {
             case Cloudlet.FAILED_RESOURCE_UNAVAILABLE:
                 statusString = "Failed_resource_unavailable";
                 break;
-
+            case Cloudlet.SUCCESS_BUT_PASSED_DEADLINE:
+                statusString = "Success_but_passed_deadline";
+                break;
             default:
                 break;
         }
@@ -1632,6 +1656,16 @@ public class Cloudlet {
      */
     public double getUtilizationOfBw(final double time) {
         return getUtilizationModelBw().getUtilization(time);
+    }
+
+    public boolean isDue() {
+        return getDeadline() < getFinishTime();
+    }
+
+    public double calculateLateness() {
+        if (isDue())
+            return getFinishTime() - getDeadline();
+        return 0.0;
     }
 
 }

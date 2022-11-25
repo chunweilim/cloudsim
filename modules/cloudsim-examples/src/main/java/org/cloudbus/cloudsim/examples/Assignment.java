@@ -2,6 +2,8 @@ package org.cloudbus.cloudsim.examples;
 
 import org.cloudbus.cloudsim.*;
 import org.cloudbus.cloudsim.core.CloudSim;
+import org.cloudbus.cloudsim.core.SimEntity;
+import org.cloudbus.cloudsim.core.SimEvent;
 import org.cloudbus.cloudsim.provisioners.BwProvisionerSimple;
 import org.cloudbus.cloudsim.provisioners.PeProvisionerSimple;
 import org.cloudbus.cloudsim.provisioners.RamProvisionerSimple;
@@ -18,7 +20,7 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 public class Assignment {
-
+    private static final String CSV_SEPARATOR = " ";
     private static final int NUM_OF_HOSTS = 500;
     private static final int PE_MIPS = 10000;
     private static final int NUM_OF_PES = 8; // Number of processing core(s)
@@ -48,43 +50,22 @@ public class Assignment {
 
         // Preparation for list of cloudlets
         List<List<Integer>> records = readRecordsFromCsv();
-        Map<Integer, List<Cloudlet>> cloudletMap = createMapOfSubmissionTimeToCloudlets(brokerId, records);
-
-        int totalNumberOfCloudlets = cloudletMap.values().stream().mapToInt(Collection::size).sum();
-        Log.printLine("Number of cloudlet(s) in total: " + totalNumberOfCloudlets);
-
-        for (Integer submissionTime : cloudletMap.keySet()) {
-            Log.printLine("Number of cloudlet(s) at time " + submissionTime + " ms: "
-                    + cloudletMap.get(submissionTime).size());
-        }
 
         //Fourth step: Create VMs and Cloudlets and send them to broker
-//        List<Vm> vmList = createVms(brokerId, totalNumberOfCloudlets);
-//        List<Cloudlet> cloudletList = cloudletMap.get(0);
-//
-//        broker.submitVmList(vmList);
-//        broker.submitCloudletList(cloudletList);
+        List<Cloudlet> cloudletList = createCloudletListsFromRecords(brokerId, records);
+        List<Vm> vmList = createVms(brokerId, cloudletList.size(), 0);
+
+        broker.submitVmList(vmList);
+        broker.submitCloudletList(cloudletList);
 
         // Fifth step: Starts the simulation
+        CloudSim.startSimulation();
 
-        // Refer to CloudSimExample8 later on how to pause simulation to submit stuff?
-        for (Integer submissionTime : cloudletMap.keySet()) {
-            double pauseAt = CloudSim.clock() + submissionTime.doubleValue();
-
-            CloudSim.startSimulation();
-            CloudSim.pauseSimulation((long) pauseAt);
-
-            broker.submitVmList(createVms(brokerId, cloudletMap.get(submissionTime).size()));
-            broker.submitCloudletList(cloudletMap.get(submissionTime));
-
-            CloudSim.resumeSimulation();
-
-        }
+        List<Cloudlet> newList = broker.getCloudletReceivedList();
 
         CloudSim.stopSimulation();
 
         // Final step: Print results when simulation is over
-        List<Cloudlet> newList = broker.getCloudletReceivedList();
         printCloudletList(newList);
 
         Log.printLine("Assignment finished!");
@@ -166,9 +147,9 @@ public class Assignment {
     // TODO: change here to have new broker?
     //We strongly encourage users to develop their own broker policies, to submit vms and cloudlets according
     //to the specific rules of the simulated scenario
-    private static DatacenterBroker createBroker(String name) throws Exception {
+    private static ScheduleBroker createBroker(String name) throws Exception {
 
-        return new DatacenterBroker(name);
+        return new ScheduleBroker(name);
     }
 
     /**
@@ -176,7 +157,7 @@ public class Assignment {
      * @param numberOfCloudlets
      * @return
      */
-    private static List<Vm> createVms(int brokerId, int numberOfCloudlets) {
+    public static List<Vm> createVms(int brokerId, int numberOfCloudlets, int vmIdShift) {
 
         List<Vm> vmList = new ArrayList<>();
         // Below specs are from examples as well
@@ -189,9 +170,8 @@ public class Assignment {
 
         IntStream.range(0, numberOfCloudlets)
                 .forEach(vmId -> vmList.add(
-                        new Vm(vmId, brokerId, mips, pesNumber, ram, bw, size, vmm, new CloudletSchedulerTimeShared())
+                        new Vm(vmId + vmIdShift, brokerId, mips, pesNumber, ram, bw, size, vmm, new CloudletSchedulerTimeShared())
                 ));
-
         return vmList;
     }
 
@@ -223,13 +203,44 @@ public class Assignment {
             Cloudlet newCloudlet = new Cloudlet(i, cloudletMIs, 1, cloudletMinMemoryToExecute,
                     cloudletMinStorageToExecute, utilizationModel, utilizationModel, utilizationModel);
             newCloudlet.setUserId(brokerId);
+            newCloudlet.setSubmissionTime(Integer.valueOf(cloudletSubmissionTime).doubleValue());
+
             if (currentList.isEmpty()) {
                 cloudletMap.put(cloudletSubmissionTime, currentList);
             }
-            currentList.add(newCloudlet); // this works because it references the same list
+            currentList.add(newCloudlet);
         }
 
         return cloudletMap;
+    }
+
+    private static List<Cloudlet> createCloudletListsFromRecords(int brokerId, List<List<Integer>> records) {
+
+        List<Cloudlet> cloudlets = new ArrayList<>();
+
+        UtilizationModel utilizationModel = new UtilizationModelFull();
+        for (int i = 0; i < records.size(); i++) {
+            List<Integer> currentRecord = records.get(i);
+
+            // in whatever CloudSim uses as time unit (which I think is ms)
+            int cloudletSubmissionTime = currentRecord.get(0);
+            int cloudletMIs = currentRecord.get(1);
+            // I am assuming min memory meaning the file size of the cloudlet has to be entirely in memory
+            int cloudletMinMemoryToExecute = currentRecord.get(2);
+            // I am assuming min storage meaning the output size of the cloudlet
+            int cloudletMinStorageToExecute = currentRecord.get(3);
+            int deadline = currentRecord.get(4);
+
+            Cloudlet newCloudlet = new Cloudlet(i, cloudletMIs, 1, cloudletMinMemoryToExecute,
+                    cloudletMinStorageToExecute, utilizationModel, utilizationModel, utilizationModel);
+            newCloudlet.setUserId(brokerId);
+            newCloudlet.setDelay(Integer.valueOf(cloudletSubmissionTime).doubleValue());
+            newCloudlet.setDeadline(Integer.valueOf(deadline).doubleValue());
+
+            cloudlets.add(newCloudlet);
+        }
+
+        return cloudlets;
     }
 
     private static List<List<Integer>> readRecordsFromCsv() throws IOException, URISyntaxException {
@@ -247,7 +258,7 @@ public class Assignment {
         ) {
             String line;
             while ((line = bufferedReader.readLine()) != null) {
-                List<Integer> record = Stream.of(line.split(",")).map(Integer::parseInt).collect(Collectors.toList());
+                List<Integer> record = Stream.of(line.split(CSV_SEPARATOR)).map(Integer::parseInt).collect(Collectors.toList());
                 records.add(record);
             }
         }
@@ -260,28 +271,18 @@ public class Assignment {
      * @param list  list of Cloudlets
      */
     private static void printCloudletList(List<Cloudlet> list) {
-        int size = list.size();
-        Cloudlet cloudlet;
-
-        String indent = "    ";
         Log.printLine();
         Log.printLine("========== OUTPUT ==========");
-        Log.printLine("Cloudlet ID" + indent + "STATUS" + indent +
-                "Data center ID" + indent + "VM ID" + indent + indent + "Time" + indent + "Start Time" + indent + "Finish Time");
+        System.out.format("%-16s%-32s%-16s%-8s%-12s%-12s%-12s%-12s%-12s%n", "Cloudlet ID", "Status", "Data center ID",
+                "VM ID", "Time", "Start Time", "Finish Time", "Deadline", "How Late");
 
         DecimalFormat dft = new DecimalFormat("###.##");
-        for (int i = 0; i < size; i++) {
-            cloudlet = list.get(i);
-            Log.print(indent + cloudlet.getCloudletId() + indent + indent);
-
-            if (cloudlet.getCloudletStatus() == Cloudlet.SUCCESS){
-                Log.print("SUCCESS");
-
-                Log.printLine( indent + indent + cloudlet.getResourceId() + indent + indent + indent + cloudlet.getVmId() +
-                        indent + indent + indent + dft.format(cloudlet.getActualCPUTime()) +
-                        indent + indent + dft.format(cloudlet.getExecStartTime())+ indent + indent + indent + dft.format(cloudlet.getFinishTime()));
-            }
+        for (Cloudlet cloudlet : list) {
+            System.out.format("%-16s%-32s%-16s%-8s%-12s%-12s%-12s%-12s%-12s%n", cloudlet.getCloudletId(),
+                    cloudlet.getCloudletStatusString(), cloudlet.getResourceId(), cloudlet.getVmId(),
+                    dft.format(cloudlet.getActualCPUTime()), dft.format(cloudlet.getExecStartTime()),
+                    dft.format(cloudlet.getFinishTime()), dft.format(cloudlet.getDeadline()),
+                    dft.format(cloudlet.calculateLateness()));
         }
-
     }
 }
